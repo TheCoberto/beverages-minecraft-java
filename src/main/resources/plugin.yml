@@ -1,0 +1,16 @@
+name: Beverages
+version: '${version}'
+main: com.thecoberto.beverages.BeveragesPlugin
+api-version: '1.21'
+softdepend: [Vault]
+description: Brewable and craftable drinks, the Mug, the Soda Vending Machine and the Beverage Fountain.
+author: TheCoberto
+commands:
+  beverages:
+    description: Give a drink, a Mug or a machine
+    usage: /beverages give <item> [player]
+    permission: beverages.admin
+permissions:
+  beverages.admin:
+    description: Give items and change machine prices
+    default: op

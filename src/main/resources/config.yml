@@ -1,0 +1,4 @@
+# The block each machine is when placed. Changing these doesn't change machines already placed.
+blocks:
+  vending-machine: IRON_BLOCK
+  beverage-fountain: QUARTZ_PILLAR
