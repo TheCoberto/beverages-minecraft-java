@@ -55,7 +55,7 @@ final class Items {
 		PotionMeta meta = (PotionMeta) stack.getItemMeta();
 		meta.setColor(Color.fromRGB(drink.color));
 		// Potions name themselves from their contents and ignore item_name, so this is a custom name.
-		meta.customName(Component.text(drink.displayName, drink.nameColor).decoration(TextDecoration.ITALIC, false));
+		meta.displayName(Component.text(drink.displayName, drink.nameColor).decoration(TextDecoration.ITALIC, false));
 		List<Component> lore = new ArrayList<>();
 		for (PotionEffect e : drink.effects) {
 			if (e.getDuration() < 20) continue;
