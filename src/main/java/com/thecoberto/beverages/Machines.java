@@ -304,6 +304,15 @@ final class Machines implements Listener {
 		skin.add(event.getBlockPlaced(), item(type.id), BlockSkin.facing(event.getPlayer()), label(type));
 	}
 
+	/** /beverages face: turns the machine the player is looking at toward them. A missing skin is made. */
+	boolean face(Player player, Block block) {
+		Settings s = settingsAt(block);
+		if (s == null) return false;
+		float yaw = BlockSkin.facing(player);
+		if (!skin.turn(block, yaw)) skin.add(block, item(s.type.id), yaw, label(s.type));
+		return true;
+	}
+
 	private static Component label(Type type) {
 		return Component.text(type.title, type.color);
 	}

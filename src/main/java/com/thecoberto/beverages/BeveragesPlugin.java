@@ -213,6 +213,17 @@ public final class BeveragesPlugin extends JavaPlugin implements Listener {
 
 	@Override
 	public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+		if (args.length == 1 && args[0].equalsIgnoreCase("face")) {
+			if (!(sender instanceof Player player)) {
+				sender.sendMessage(Component.text("Only players can do that.", NamedTextColor.RED));
+				return true;
+			}
+			Block block = player.getTargetBlockExact(6);
+			sender.sendMessage(block != null && machines.face(player, block)
+					? Component.text("Turned it to face you.", NamedTextColor.GREEN)
+					: Component.text("Look at a Soda Vending Machine or Beverage Fountain first.", NamedTextColor.RED));
+			return true;
+		}
 		if (args.length < 2 || !args[0].equalsIgnoreCase("give")) return false;
 		String id = args[1].toLowerCase(Locale.ROOT);
 		ItemStack item;
@@ -237,7 +248,7 @@ public final class BeveragesPlugin extends JavaPlugin implements Listener {
 	@Override
 	public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
 		List<String> options = new ArrayList<>();
-		if (args.length == 1) options.add("give");
+		if (args.length == 1) options.addAll(List.of("give", "face"));
 		else if (args.length == 2) options.addAll(giveIds());
 		else if (args.length == 3) Bukkit.getOnlinePlayers().forEach(p -> options.add(p.getName()));
 		String typed = args[args.length - 1].toLowerCase(Locale.ROOT);

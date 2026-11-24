@@ -8,7 +8,7 @@ author: TheCoberto
 commands:
   beverages:
     description: Give a drink, a Mug or a machine
-    usage: /beverages give <item> [player]
+    usage: /beverages <give <item> [player]|face>
     permission: beverages.admin
 permissions:
   beverages.admin:

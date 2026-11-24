@@ -47,9 +47,22 @@ final class BlockSkin {
 		return block.getLocation().add(0.5, 1.01, 0.5);
 	}
 
-	/** The yaw that turns the model's front toward the player who placed it. */
+	/** The yaw that turns the model's front toward the player (who placed it, or is turning it). */
 	static float facing(Player player) {
-		return Math.round((player.getLocation().getYaw() + 180f) / 90f) * 90f;
+		return Math.round(player.getLocation().getYaw() / 90f) * 90f;
+	}
+
+	/** Turns a placed block's model to this yaw, without replacing anything. False if it has no skin. */
+	boolean turn(Block block, float yaw) {
+		String want = id(block) + MODEL;
+		boolean turned = false;
+		for (Entity e : block.getWorld().getNearbyEntities(block.getLocation().add(0.5, 1.2, 0.5), 0.6, 0.6, 0.6)) {
+			if (want.equals(tagOf(e))) {
+				e.setRotation(yaw, 0f);
+				turned = true;
+			}
+		}
+		return turned;
 	}
 
 	void add(Block block, ItemStack model, float yaw) {
