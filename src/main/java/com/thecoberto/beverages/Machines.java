@@ -1,16 +1,28 @@
 package com.thecoberto.beverages;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
+import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.event.player.PlayerQuitEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.GameMode;
+import org.bukkit.World;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.world.EntitiesLoadEvent;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
@@ -50,9 +62,9 @@ final class Machines implements Listener {
 	private static final String ADMIN = "beverages.admin";
 
 	private enum Type {
-		VENDING(Items.VENDING_MACHINE, "Soda Vending Machine", NamedTextColor.RED, false, "item", 1, false,
+		VENDING(Items.VENDING_MACHINE, "Soda Vending Machine", NamedTextColor.RED, false, "money", 1, false,
 				Drink.SODA, Drink.SODA_STRONG, Drink.SODA_LONG),
-		FOUNTAIN(Items.BEVERAGE_FOUNTAIN, "Beverage Fountain", NamedTextColor.AQUA, true, "free", 1, true,
+		FOUNTAIN(Items.BEVERAGE_FOUNTAIN, "Beverage Fountain", NamedTextColor.AQUA, true, "money", 1, true,
 				Drink.SODA, Drink.COFFEE, Drink.ICED_TEA, Drink.APPLE_CIDER, Drink.HOT_COCOA,
 				Drink.SWEET_BERRY_SMOOTHIE, Drink.GLOW_BERRY_JUICE, Drink.HASTE_POTION);
 
@@ -135,8 +147,37 @@ final class Machines implements Listener {
 
 		int priceOf(Drink drink) {
 			if (currency.equals("free")) return 0;
-			return prices.getOrDefault(drink, amount);
+			Integer own = prices.get(drink);
+			if (own != null) return own;
+			return currency.equals("money") ? suggestedPrice(drink) : amount;
 		}
+	}
+
+	/**
+	 * Money price for a drink nobody priced yet, by how strong it is. Haste
+	 * Potion (Haste II for 30 minutes) is the strongest.
+	 */
+	static int suggestedPrice(Drink drink) {
+		return switch (drink) {
+			case HASTE_POTION -> 5000;
+			case HASTE_POTION_STRONG -> 4000; // Haste III, but half as long
+			case HASTE_POTION_LONG -> 8000; // an hour
+			case SODA -> 1500; // Speed III, 3 minutes
+			case SODA_STRONG -> 2000;
+			case SODA_LONG -> 2500;
+			case ICED_TEA -> 1500; // Fire Resistance, 3 minutes
+			case ICED_TEA_STRONG -> 1500;
+			case ICED_TEA_LONG -> 2500;
+			case COFFEE -> 1000; // Haste I for 2 minutes and a little Speed
+			case COFFEE_STRONG -> 1500;
+			case COFFEE_LONG -> 1750;
+			case HOT_COCOA -> 1000; // Regeneration, clears Slowness
+			case GLOW_BERRY_JUICE -> 1000; // senses monsters
+			case APPLE_CIDER -> 750; // Night Vision, 3 minutes
+			case APPLE_CIDER_STRONG -> 750;
+			case APPLE_CIDER_LONG -> 1250;
+			case SWEET_BERRY_SMOOTHIE -> 500; // fills hunger
+		};
 	}
 
 	private record MachineMenu(Block block, boolean settings) implements InventoryHolder {
@@ -148,11 +189,46 @@ final class Machines implements Listener {
 
 	private final JavaPlugin plugin;
 	private final Map<Type, Material> blocks = new LinkedHashMap<>();
+	private final BlockSkin skin;
 
 	Machines(JavaPlugin plugin) {
 		this.plugin = plugin;
+		this.skin = new BlockSkin(plugin);
 		blocks.put(Type.VENDING, block("blocks.vending-machine", Material.IRON_BLOCK));
 		blocks.put(Type.FOUNTAIN, block("blocks.beverage-fountain", Material.QUARTZ_PILLAR));
+		// Machines placed before skins existed (or in chunks already loaded) get one now.
+		Bukkit.getScheduler().runTask(plugin, () -> {
+			for (World world : Bukkit.getWorlds()) {
+				for (Chunk chunk : world.getLoadedChunks()) {
+					if (!chunk.isEntitiesLoaded()) continue;
+					List<Entity> loaded = List.of(chunk.getEntities());
+					addMissingSkins(chunk, loaded);
+					skin.hideLabels(loaded);
+				}
+			}
+		});
+		Bukkit.getScheduler().runTaskTimer(plugin, this::updateLabels, 20L, 4L);
+	}
+
+	// ---------- Floating names, shown while looking at the machine ----------
+
+	/** Player -> the block they're looking at (position key), and the label shown to them. */
+	private final Map<UUID, String> lookedAt = new ConcurrentHashMap<>();
+	private final Map<UUID, TextDisplay> shownLabel = new ConcurrentHashMap<>();
+
+	private void updateLabels() {
+		for (Player player : Bukkit.getOnlinePlayers()) {
+			Block block = player.getTargetBlockExact(6);
+			String where = block == null ? "" : block.getWorld().getName() + "," + block.getX() + "," + block.getY() + "," + block.getZ();
+			if (where.equals(lookedAt.put(player.getUniqueId(), where))) continue; // still looking at the same block
+			TextDisplay old = shownLabel.remove(player.getUniqueId());
+			if (old != null && old.isValid()) player.hideEntity(plugin, old);
+			if (block == null || settingsAt(block) == null) continue;
+			TextDisplay label = skin.label(block);
+			if (label == null) continue;
+			player.showEntity(plugin, label);
+			shownLabel.put(player.getUniqueId(), label);
+		}
 	}
 
 	private Material block(String path, Material fallback) {
@@ -184,9 +260,32 @@ final class Machines implements Listener {
 		// The block was replaced some other way (like /setblock): forget it.
 		if (s == null || block.getType() != blocks.get(s.type)) {
 			pdc.remove(keyAt(block));
+			skin.remove(block);
 			return null;
 		}
 		return s;
+	}
+
+	@EventHandler
+	public void onEntitiesLoad(EntitiesLoadEvent event) {
+		addMissingSkins(event.getChunk(), event.getEntities());
+		skin.hideLabels(event.getEntities());
+	}
+
+	private void addMissingSkins(Chunk chunk, Collection<Entity> entities) {
+		for (NamespacedKey k : chunk.getPersistentDataContainer().getKeys()) {
+			if (!k.getNamespace().equals(plugin.getName().toLowerCase(Locale.ROOT)) || !k.getKey().startsWith("machine_")) continue;
+			String[] xyz = k.getKey().substring("machine_".length()).replace("_neg", "").split("_");
+			if (xyz.length != 3) continue;
+			Block block;
+			try {
+				block = chunk.getWorld().getBlockAt(Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2]));
+			} catch (NumberFormatException e) {
+				continue;
+			}
+			Settings s = settingsAt(block);
+			if (s != null && !skin.hasSkin(entities, block, true)) skin.add(block, item(s.type.id), 0f, label(s.type));
+		}
 	}
 
 	private void save(Block block, Settings settings) {
@@ -200,7 +299,13 @@ final class Machines implements Listener {
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	public void onPlace(BlockPlaceEvent event) {
 		Type type = Type.byId(Items.idOf(event.getItemInHand()));
-		if (type != null) save(event.getBlockPlaced(), Settings.defaults(type));
+		if (type == null) return;
+		save(event.getBlockPlaced(), Settings.defaults(type));
+		skin.add(event.getBlockPlaced(), item(type.id), BlockSkin.facing(event.getPlayer()), label(type));
+	}
+
+	private static Component label(Type type) {
+		return Component.text(type.title, type.color);
 	}
 
 	@EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -208,6 +313,7 @@ final class Machines implements Listener {
 		Settings s = settingsAt(event.getBlock());
 		if (s == null) return;
 		forget(event.getBlock());
+		skin.remove(event.getBlock());
 		event.setDropItems(false);
 		if (event.getPlayer().getGameMode() != GameMode.CREATIVE) {
 			event.getBlock().getWorld().dropItemNaturally(event.getBlock().getLocation().add(0.5, 0.5, 0.5), item(s.type.id));
@@ -278,15 +384,15 @@ final class Machines implements Listener {
 		inv.setItem(1, button(Material.GOLD_INGOT, "Price paid in: " + currencyName, List.of(Items.line("Click to change: Item, Money, Free", NamedTextColor.GRAY))));
 		inv.setItem(3, button(s.item, "Item: " + pretty(s.item), List.of(Items.line("Click to use the item in your hand", NamedTextColor.GRAY))));
 		inv.setItem(5, button(Material.EMERALD, "Default amount: " + s.amount,
-				List.of(Items.line("Left click +1, right click -1", NamedTextColor.GRAY), Items.line("Shift: +10 / -10", NamedTextColor.GRAY))));
+				List.of(Items.line("Click to type a new amount in chat", NamedTextColor.GRAY))));
 		if (s.type.allowMug) {
 			inv.setItem(7, button(Material.BOWL, "Needs an empty Mug: " + (s.needsMug ? "Yes" : "No"), List.of(Items.line("Click to change", NamedTextColor.GRAY))));
 		}
 		int slot = 18;
 		for (Drink drink : s.type.drinks) {
 			Integer own = s.prices.get(drink);
-			ItemStack icon = button(Material.POTION, drink.displayName + ": " + (own == null ? "default (" + s.amount + ")" : own == 0 ? "free" : own),
-					List.of(Items.line("Left click +1, right click -1", NamedTextColor.GRAY),
+			ItemStack icon = button(Material.POTION, drink.displayName + ": " + (own == null ? "default (" + priceLabel(s, s.priceOf(drink)) + ")" : own == 0 ? "free" : own),
+					List.of(Items.line("Click to type a price in chat", NamedTextColor.GRAY),
 							Items.line("Shift click: back to the default", NamedTextColor.GRAY)));
 			icon.setItemMeta(withColor(icon, drink));
 			inv.setItem(slot++, icon);
@@ -305,7 +411,8 @@ final class Machines implements Listener {
 	private static ItemStack button(Material material, String name, List<Component> lore) {
 		ItemStack stack = new ItemStack(material);
 		ItemMeta meta = stack.getItemMeta();
-		meta.itemName(Component.text(name, NamedTextColor.WHITE));
+		// A custom name, not item_name: potions ignore item_name and call themselves "Uncraftable Potion".
+		meta.displayName(Component.text(name, NamedTextColor.WHITE).decoration(TextDecoration.ITALIC, false));
 		meta.lore(lore);
 		stack.setItemMeta(meta);
 		return stack;
@@ -346,7 +453,6 @@ final class Machines implements Listener {
 			return;
 		}
 		ClickType click = event.getClick();
-		int step = click.isShiftClick() ? 10 : 1;
 		switch (slot) {
 			case 1 -> s.currency = switch (s.currency) {
 				case "item" -> "money";
@@ -361,7 +467,10 @@ final class Machines implements Listener {
 				}
 				s.item = hand;
 			}
-			case 5 -> s.amount = Math.max(1, s.amount + (click.isRightClick() ? -step : step));
+			case 5 -> {
+				askPrice(player, menu.block(), null);
+				return;
+			}
 			case 7 -> {
 				if (s.type.allowMug) s.needsMug = !s.needsMug;
 			}
@@ -375,8 +484,8 @@ final class Machines implements Listener {
 				Drink drink = s.type.drinks.get(index);
 				if (click.isShiftClick()) s.prices.remove(drink);
 				else {
-					int now = s.prices.getOrDefault(drink, s.amount) + (click.isRightClick() ? -1 : 1);
-					s.prices.put(drink, Math.max(0, now));
+					askPrice(player, menu.block(), drink);
+					return;
 				}
 			}
 		}
@@ -386,6 +495,69 @@ final class Machines implements Listener {
 		}
 		save(menu.block(), s);
 		openSettings(player, menu.block(), s);
+	}
+
+	// ---------- Typing prices in chat ----------
+
+	/** A price someone was asked to type. Drink null means the machine's default amount. */
+	private record PriceQuestion(Block block, Drink drink) {
+	}
+
+	private final Map<UUID, PriceQuestion> asking = new ConcurrentHashMap<>();
+
+	private void askPrice(Player player, Block block, Drink drink) {
+		asking.put(player.getUniqueId(), new PriceQuestion(block, drink));
+		player.closeInventory();
+		String what = drink == null ? "the default amount" : "the price of " + drink.displayName;
+		player.sendMessage(Component.text("Type " + what + " in chat", NamedTextColor.GOLD)
+				.append(Component.text(drink == null ? " (1 or more), or \"cancel\"." : " (0 is free), \"default\", or \"cancel\".", NamedTextColor.GRAY)));
+	}
+
+	@EventHandler(priority = EventPriority.LOWEST)
+	public void onChat(AsyncChatEvent event) {
+		PriceQuestion question = asking.remove(event.getPlayer().getUniqueId());
+		if (question == null) return;
+		event.setCancelled(true); // the answer isn't chat
+		String answer = PlainTextComponentSerializer.plainText().serialize(event.message()).trim().toLowerCase(Locale.ROOT);
+		Player player = event.getPlayer();
+		Bukkit.getScheduler().runTask(plugin, () -> answerPrice(player, question, answer));
+	}
+
+	private void answerPrice(Player player, PriceQuestion question, String answer) {
+		if (!player.isOnline() || !player.hasPermission(ADMIN)) return;
+		Settings s = settingsAt(question.block());
+		if (s == null) {
+			player.sendMessage(Component.text("That machine is gone.", NamedTextColor.RED));
+			return;
+		}
+		if (!answer.equals("cancel")) {
+			if (question.drink() != null && answer.equals("default")) s.prices.remove(question.drink());
+			else {
+				int value;
+				try {
+					value = Integer.parseInt(answer.replace(",", ""));
+				} catch (NumberFormatException e) {
+					value = -1;
+				}
+				int least = question.drink() == null ? 1 : 0;
+				if (value < least) {
+					player.sendMessage(Component.text("\"" + answer + "\" isn't a number from " + least + " up. Click it again to retry.", NamedTextColor.RED));
+					openSettings(player, question.block(), s);
+					return;
+				}
+				if (question.drink() == null) s.amount = value;
+				else s.prices.put(question.drink(), value);
+			}
+			save(question.block(), s);
+		}
+		openSettings(player, question.block(), s);
+	}
+
+	@EventHandler
+	public void onQuit(PlayerQuitEvent event) {
+		asking.remove(event.getPlayer().getUniqueId());
+		lookedAt.remove(event.getPlayer().getUniqueId());
+		shownLabel.remove(event.getPlayer().getUniqueId());
 	}
 
 	// ---------- Paying ----------
