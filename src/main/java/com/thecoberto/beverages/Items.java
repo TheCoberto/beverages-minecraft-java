@@ -73,26 +73,29 @@ final class Items {
 		if (drink.mug) lore.add(line("Gives the Mug back", NamedTextColor.GRAY));
 		meta.lore(lore);
 		meta.addItemFlags(ItemFlag.HIDE_ADDITIONAL_TOOLTIP);
+		// Picks the drink's texture in the server resource pack (4101 and up). Without the pack it looks like a potion.
+		meta.setCustomModelData(4101 + drink.ordinal());
 		meta.getPersistentDataContainer().set(KEY, PersistentDataType.STRING, drink.id());
 		stack.setItemMeta(meta);
 		return stack;
 	}
 
 	static ItemStack mug(int amount) {
-		return tagged(Material.BOWL, amount, MUG, Component.text("Mug"), "For Coffee and Hot Cocoa");
+		return tagged(Material.BOWL, amount, MUG, 4201, Component.text("Mug"), "For Coffee and Hot Cocoa");
 	}
 
 	static ItemStack machine(String id, Material block) {
 		return id.equals(VENDING_MACHINE)
-				? tagged(block, 1, id, Component.text("Soda Vending Machine", NamedTextColor.RED), "Place it, then use it to buy Soda")
-				: tagged(block, 1, id, Component.text("Beverage Fountain", NamedTextColor.AQUA), "Place it, then use it to pour drinks");
+				? tagged(block, 1, id, 4202, Component.text("Soda Vending Machine", NamedTextColor.RED), "Place it, then use it to buy Soda")
+				: tagged(block, 1, id, 4203, Component.text("Beverage Fountain", NamedTextColor.AQUA), "Place it, then use it to pour drinks");
 	}
 
-	private static ItemStack tagged(Material material, int amount, String id, Component name, String info) {
+	private static ItemStack tagged(Material material, int amount, String id, int model, Component name, String info) {
 		ItemStack stack = new ItemStack(material, amount);
 		ItemMeta meta = stack.getItemMeta();
 		meta.itemName(name);
 		meta.lore(List.of(line(info, NamedTextColor.GRAY)));
+		meta.setCustomModelData(model);
 		meta.getPersistentDataContainer().set(KEY, PersistentDataType.STRING, id);
 		stack.setItemMeta(meta);
 		return stack;
